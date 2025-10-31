@@ -1,0 +1,28 @@
+workflows:
+  full_processing:
+    name: "Full Processing"
+    description: "Download → Process → Upload"
+    steps: [download, concat, subtitle, translate_subtitle, embed_subtitle, split_final, watermark, upload]
+
+  download_only:
+    name: "Download Only"
+    description: "Only download content"
+    steps: [download, concat]
+
+  tiktok_ready:
+    name: "TikTok Ready"
+    description: "Prepare and upload short-form content"
+    steps: [download, concat, subtitle, translate_subtitle, embed_subtitle, split_final, watermark, upload]
+    processing_overrides:
+      split_duration: 180
+    platform_overrides:
+      enabled_platforms: [tiktok]
+
+  youtube_ready:
+    name: "YouTube Ready"
+    description: "Prepare long-form content"
+    steps: [download, concat, subtitle, translate_subtitle, embed_subtitle, watermark, upload]
+    processing_overrides:
+      split_duration: null
+    platform_overrides:
+      enabled_platforms: [youtube]

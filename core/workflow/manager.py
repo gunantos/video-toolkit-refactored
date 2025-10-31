@@ -1,5 +1,5 @@
 """
-Workflow Manager - adjust to honor CLI overrides for platforms/split/tiktok profile
+Wire platform strategy and metadata generation into workflow
 """
 
 import asyncio
@@ -12,6 +12,7 @@ from core.utils.logging import get_logger
 from core.constants import WORKFLOW_PRESETS, ProcessingStatus
 from core.workflow.steps import WorkflowStepExecutor
 from core.workflow.presets import PresetManager
+from core.workflow.strategy import apply_platform_strategy, generate_basic_metadata
 
 logger = get_logger(__name__)
 
@@ -33,11 +34,11 @@ class WorkflowContext:
         self.step_results = {}
         self.upload_results = {}
         self.metadata = {}
-        # runtime overrides
         self.tiktok_profile = self.options.get("tiktok_profile")
 
     def add_output_file(self, file_path: Path, file_type: str = "output"):
-        self.output_files.append({"path": file_path, "type": file_type, "created_at": datetime.now()})
+        from datetime import datetime as _dt
+        self.output_files.append({"path": file_path, "type": file_type, "created_at": _dt.now()})
 
 
 class WorkflowManager:
@@ -48,25 +49,27 @@ class WorkflowManager:
 
     def execute_workflow(self, preset_key: str, video_source: str, options: Dict[str, Any] = None,
                           progress_callback: Optional[Callable[[str], None]] = None):
-        # Launch async loop
         return asyncio.run(self._execute_async(preset_key, video_source, options, progress_callback))
 
     async def _execute_async(self, preset_key: str, video_source: str, options: Dict[str, Any] = None,
                               progress_callback: Optional[Callable[[str], None]] = None):
         ctx = WorkflowContext(video_source, options)
         wf = WORKFLOW_PRESETS[preset_key]
-        # apply overrides
+        # CLI overrides
         if ctx.options.get("platforms"):
             self.config.platforms.enabled_platforms = ctx.options["platforms"]
         if ctx.options.get("split_duration") is not None:
             self.config.processing.split_duration = ctx.options["split_duration"]
-        # working dir
+        # Working dir
         ctx.working_dir = self._create_workdir(video_source)
-
-        # run steps
+        # Platform strategy
+        apply_platform_strategy(ctx)
+        # Metadata
+        ctx.metadata = generate_basic_metadata(video_source, ctx.working_dir)
+        # Run steps
         for step in wf["steps"]:
             await self.step_executor.execute_step(step, ctx)
-        return {"success": True, "output_files": [f["path"] for f in ctx.output_files]}
+        return {"success": True, "output_files": [f["path"] for f in ctx.output_files], "metadata": ctx.metadata}
 
     def _create_workdir(self, video_source: str) -> Path:
         root = self.config.paths.output_dir
