@@ -1,5 +1,5 @@
 """
-Update upload step to route to TikTok as well (if enabled in config)
+Update upload step to accept TikTok profile override from context options
 """
 
 import asyncio
@@ -17,6 +17,7 @@ from processors.subtitle.embedder import embed_subtitle_in_video
 from processors.video.merger import concat_videos_from_folder, split_video_by_duration
 from processors.video.watermark import embed_watermark
 from uploaders.manager import UploadManager
+from uploaders.platforms.tiktok import TikTokUploader
 
 logger = get_logger(__name__)
 
@@ -168,10 +169,15 @@ class WorkflowStepExecutor:
         if not video or not video.exists():
             return
         platforms = get_config().platforms.enabled_platforms
-        uploader = UploadManager()
         for p in platforms:
-            meta = {"caption": context.metadata.get("title", video.stem), "tags": context.metadata.get("tags", [])}
-            uploader.upload(p, video, meta)
+            if p == "tiktok":
+                # Honor CLI override for TikTok profile
+                profile = getattr(context, "tiktok_profile", None) or "default"
+                u = TikTokUploader(profile_name=profile)
+                u.upload(video, caption=context.metadata.get("title", video.stem), tags=context.metadata.get("tags", []))
+            elif p == "telegram":
+                from uploaders.manager import UploadManager
+                UploadManager().upload("telegram", video, {"caption": video.stem})
 
     async def _noop(self, context):
         await asyncio.sleep(0.05)
