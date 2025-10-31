@@ -1,5 +1,5 @@
 """
-Wire watermark and telegram upload steps into workflow
+Extend download step to support 'duanju:' prefixed sources via scraper
 """
 
 import asyncio
@@ -10,6 +10,7 @@ from typing import Any, Dict
 from core.config import get_config
 from core.utils.logging import get_logger
 from downloaders.universal import UniversalDownloader
+from downloaders.scrapers.duanju import DuanjuScraper
 from processors.subtitle.generator import extract_audio_for_whisper, generate_subtitle_whisper
 from processors.subtitle.translator import translate_subtitle_robust
 from processors.subtitle.embedder import embed_subtitle_in_video
@@ -52,23 +53,37 @@ class WorkflowStepExecutor:
     async def _download(self, context):
         cfg = get_config()
         out_dir = context.working_dir or cfg.paths.output_dir
-        if isinstance(context.video_source, str) and context.video_source.startswith("http"):
+        source = context.video_source
+        # Support duanju: prefix for scraper mode
+        if isinstance(source, str) and source.startswith("duanju:"):
+            scraper = DuanjuScraper(headless=True)
+            series_id = source.split(":", 1)[1]
+            result = scraper.download_series(series_id, out_dir)
+            if result and Path(result).exists():
+                context.video_file = Path(result)
+                context.add_output_file(Path(result), "download")
+                logger.info(f"Downloaded via duanju scraper: {result}")
+                return
+            else:
+                raise RuntimeError("Duanju scraper download failed")
+        # Fallback to universal downloader
+        if isinstance(source, str) and source.startswith("http"):
             downloader = UniversalDownloader(out_dir)
             loop = asyncio.get_event_loop()
-            file_path = await loop.run_in_executor(None, downloader.download, context.video_source)
+            file_path = await loop.run_in_executor(None, downloader.download, source)
             if file_path:
                 context.video_file = Path(file_path)
                 context.add_output_file(Path(file_path), "download")
                 logger.info(f"Downloaded: {file_path}")
+                return
             else:
                 raise RuntimeError("Download failed")
+        p = Path(source)
+        if p.exists():
+            context.video_file = p
+            logger.info(f"Using local source: {p}")
         else:
-            p = Path(context.video_source)
-            if p.exists():
-                context.video_file = p
-                logger.info(f"Using local source: {p}")
-            else:
-                raise FileNotFoundError(f"Source not found: {p}")
+            raise FileNotFoundError(f"Source not found: {p}")
 
     async def _concat(self, context):
         src = context.video_file
