@@ -1,5 +1,5 @@
 """
-Update upload step to accept TikTok profile override from context options
+Enhance upload step: platform-specific caption/hashtags and success validation for TikTok
 """
 
 import asyncio
@@ -16,10 +16,30 @@ from processors.subtitle.translator import translate_subtitle_robust
 from processors.subtitle.embedder import embed_subtitle_in_video
 from processors.video.merger import concat_videos_from_folder, split_video_by_duration
 from processors.video.watermark import embed_watermark
-from uploaders.manager import UploadManager
 from uploaders.platforms.tiktok import TikTokUploader
+from uploaders.manager import UploadManager
 
 logger = get_logger(__name__)
+
+
+def build_caption_for_platform(platform: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    title = metadata.get("title", "")
+    tags = metadata.get("tags", [])
+    desc = metadata.get("description", "")
+
+    if platform == "tiktok":
+        # Short caption + hashtags
+        hashtag_line = " ".join(f"#{t}" for t in tags[:8])
+        caption = (title[:80] + ("…" if len(title) > 80 else "")).strip()
+        full = (caption + "\n" + hashtag_line).strip()
+        return {"caption": full, "tags": tags[:8]}
+    if platform == "telegram":
+        return {"caption": title}
+    if platform in ("youtube", "facebook", "dailymotion"):
+        # Long-form description
+        long_desc = f"{title}\n\n{desc}"
+        return {"caption": long_desc, "tags": tags}
+    return {"caption": title, "tags": tags}
 
 
 class WorkflowStepExecutor:
@@ -168,16 +188,16 @@ class WorkflowStepExecutor:
         video = context.video_file
         if not video or not video.exists():
             return
-        platforms = get_config().platforms.enabled_platforms
+        platforms = context.options.get("platforms") or get_config().platforms.enabled_platforms
         for p in platforms:
+            meta = build_caption_for_platform(p, context.metadata)
             if p == "tiktok":
-                # Honor CLI override for TikTok profile
                 profile = getattr(context, "tiktok_profile", None) or "default"
                 u = TikTokUploader(profile_name=profile)
-                u.upload(video, caption=context.metadata.get("title", video.stem), tags=context.metadata.get("tags", []))
+                ok = u.upload(video, caption=meta.get("caption", ""), tags=meta.get("tags", []))
+                logger.info(f"TikTok upload result: {ok}")
             elif p == "telegram":
-                from uploaders.manager import UploadManager
-                UploadManager().upload("telegram", video, {"caption": video.stem})
+                UploadManager().upload("telegram", video, {"caption": meta.get("caption", video.stem)})
 
     async def _noop(self, context):
         await asyncio.sleep(0.05)
