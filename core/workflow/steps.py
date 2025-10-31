@@ -1,5 +1,5 @@
 """
-Use config-driven captions and TikTok success validation in upload step
+Use parallel uploads and persist results to file
 """
 
 import asyncio
@@ -16,10 +16,7 @@ from processors.subtitle.translator import translate_subtitle_robust
 from processors.subtitle.embedder import embed_subtitle_in_video
 from processors.video.merger import concat_videos_from_folder, split_video_by_duration
 from processors.video.watermark import embed_watermark
-from uploaders.platforms.tiktok import TikTokUploader
-from uploaders.platforms.tiktok_success import wait_tiktok_success
-from uploaders.manager import UploadManager
-from core.workflow.caption import render_platform_caption
+from core.workflow.parallel_upload import parallel_upload, save_upload_results
 
 logger = get_logger(__name__)
 
@@ -171,16 +168,9 @@ class WorkflowStepExecutor:
         if not video or not video.exists():
             return
         platforms = context.options.get("platforms") or get_config().platforms.enabled_platforms
-        for p in platforms:
-            meta = render_platform_caption(p, context.metadata)
-            if p == "tiktok":
-                profile = getattr(context, "tiktok_profile", None) or "default"
-                u = TikTokUploader(profile_name=profile)
-                ok = u.upload(video, caption=meta.get("caption", ""), tags=meta.get("tags", []))
-                ok2 = wait_tiktok_success(u.driver) if u.driver else False
-                logger.info(f"TikTok final success: {ok and ok2}")
-            elif p == "telegram":
-                UploadManager().upload("telegram", video, {"caption": meta.get("caption", video.stem)})
+        # Parallel upload with concurrency limit
+        results = await parallel_upload(platforms, video, context.metadata, getattr(context, "tiktok_profile", None), limit=2)
+        save_upload_results(context.working_dir, results)
 
     async def _noop(self, context):
         await asyncio.sleep(0.05)
