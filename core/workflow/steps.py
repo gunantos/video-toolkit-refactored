@@ -1,5 +1,5 @@
 """
-Use parallel uploads and persist results to file
+Auto-compress for Telegram if size exceeds limit
 """
 
 import asyncio
@@ -16,6 +16,7 @@ from processors.subtitle.translator import translate_subtitle_robust
 from processors.subtitle.embedder import embed_subtitle_in_video
 from processors.video.merger import concat_videos_from_folder, split_video_by_duration
 from processors.video.watermark import embed_watermark
+from processors.video.compress import compress_for_telegram
 from core.workflow.parallel_upload import parallel_upload, save_upload_results
 
 logger = get_logger(__name__)
@@ -168,7 +169,14 @@ class WorkflowStepExecutor:
         if not video or not video.exists():
             return
         platforms = context.options.get("platforms") or get_config().platforms.enabled_platforms
+        # Auto-compress for Telegram if too large
+        if "telegram" in platforms and video.stat().st_size > 48 * 1024 * 1024:
+            compressed = context.working_dir / f"{video.stem}_tg.mp4"
+            if compress_for_telegram(video, compressed):
+                video = compressed
+                context.video_file = video
         # Parallel upload with concurrency limit
+        from core.workflow.parallel_upload import parallel_upload, save_upload_results
         results = await parallel_upload(platforms, video, context.metadata, getattr(context, "tiktok_profile", None), limit=2)
         save_upload_results(context.working_dir, results)
 
