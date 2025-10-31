@@ -1,5 +1,5 @@
 """
-Enhance upload step: platform-specific caption/hashtags and success validation for TikTok
+Use config-driven captions and TikTok success validation in upload step
 """
 
 import asyncio
@@ -17,29 +17,11 @@ from processors.subtitle.embedder import embed_subtitle_in_video
 from processors.video.merger import concat_videos_from_folder, split_video_by_duration
 from processors.video.watermark import embed_watermark
 from uploaders.platforms.tiktok import TikTokUploader
+from uploaders.platforms.tiktok_success import wait_tiktok_success
 from uploaders.manager import UploadManager
+from core.workflow.caption import render_platform_caption
 
 logger = get_logger(__name__)
-
-
-def build_caption_for_platform(platform: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
-    title = metadata.get("title", "")
-    tags = metadata.get("tags", [])
-    desc = metadata.get("description", "")
-
-    if platform == "tiktok":
-        # Short caption + hashtags
-        hashtag_line = " ".join(f"#{t}" for t in tags[:8])
-        caption = (title[:80] + ("…" if len(title) > 80 else "")).strip()
-        full = (caption + "\n" + hashtag_line).strip()
-        return {"caption": full, "tags": tags[:8]}
-    if platform == "telegram":
-        return {"caption": title}
-    if platform in ("youtube", "facebook", "dailymotion"):
-        # Long-form description
-        long_desc = f"{title}\n\n{desc}"
-        return {"caption": long_desc, "tags": tags}
-    return {"caption": title, "tags": tags}
 
 
 class WorkflowStepExecutor:
@@ -190,12 +172,13 @@ class WorkflowStepExecutor:
             return
         platforms = context.options.get("platforms") or get_config().platforms.enabled_platforms
         for p in platforms:
-            meta = build_caption_for_platform(p, context.metadata)
+            meta = render_platform_caption(p, context.metadata)
             if p == "tiktok":
                 profile = getattr(context, "tiktok_profile", None) or "default"
                 u = TikTokUploader(profile_name=profile)
                 ok = u.upload(video, caption=meta.get("caption", ""), tags=meta.get("tags", []))
-                logger.info(f"TikTok upload result: {ok}")
+                ok2 = wait_tiktok_success(u.driver) if u.driver else False
+                logger.info(f"TikTok final success: {ok and ok2}")
             elif p == "telegram":
                 UploadManager().upload("telegram", video, {"caption": meta.get("caption", video.stem)})
 

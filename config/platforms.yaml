@@ -1,0 +1,9 @@
+platforms:
+  tiktok:
+    caption_template: "{title}\n{hashtags}"
+    hashtags: ["dramachina","movie","indonesia","rekomendasi","filmbaru","subindo","romance","series"]
+    hashtag_limit: 8
+  youtube:
+    description_template: "{title}\n\n{description}\n\nTags: {tags}"
+  telegram:
+    caption_template: "{title}"
