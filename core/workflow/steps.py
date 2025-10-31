@@ -1,5 +1,5 @@
 """
-Extend download step to support 'duanju:' prefixed sources via scraper
+Update upload step to route to TikTok as well (if enabled in config)
 """
 
 import asyncio
@@ -54,7 +54,6 @@ class WorkflowStepExecutor:
         cfg = get_config()
         out_dir = context.working_dir or cfg.paths.output_dir
         source = context.video_source
-        # Support duanju: prefix for scraper mode
         if isinstance(source, str) and source.startswith("duanju:"):
             scraper = DuanjuScraper(headless=True)
             series_id = source.split(":", 1)[1]
@@ -66,7 +65,6 @@ class WorkflowStepExecutor:
                 return
             else:
                 raise RuntimeError("Duanju scraper download failed")
-        # Fallback to universal downloader
         if isinstance(source, str) and source.startswith("http"):
             downloader = UniversalDownloader(out_dir)
             loop = asyncio.get_event_loop()
@@ -172,8 +170,8 @@ class WorkflowStepExecutor:
         platforms = get_config().platforms.enabled_platforms
         uploader = UploadManager()
         for p in platforms:
-            if p == "telegram":
-                uploader.upload("telegram", video, {"caption": video.stem})
+            meta = {"caption": context.metadata.get("title", video.stem), "tags": context.metadata.get("tags", [])}
+            uploader.upload(p, video, meta)
 
     async def _noop(self, context):
         await asyncio.sleep(0.05)
