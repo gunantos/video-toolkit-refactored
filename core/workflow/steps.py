@@ -1,5 +1,5 @@
 """
-Extend workflow steps to include subtitle pipeline and splitting
+Wire watermark and telegram upload steps into workflow
 """
 
 import asyncio
@@ -14,6 +14,8 @@ from processors.subtitle.generator import extract_audio_for_whisper, generate_su
 from processors.subtitle.translator import translate_subtitle_robust
 from processors.subtitle.embedder import embed_subtitle_in_video
 from processors.video.merger import concat_videos_from_folder, split_video_by_duration
+from processors.video.watermark import embed_watermark
+from uploaders.manager import UploadManager
 
 logger = get_logger(__name__)
 
@@ -40,9 +42,9 @@ class WorkflowStepExecutor:
         elif step_name == "split_final":
             await self._split_final(context)
         elif step_name == "watermark":
-            await self._noop(context)
+            await self._watermark(context)
         elif step_name == "upload":
-            await self._noop(context)
+            await self._upload(context)
         else:
             raise ValueError(f"Unknown step: {step_name}")
         return {"execution_time": time.time() - start}
@@ -50,7 +52,6 @@ class WorkflowStepExecutor:
     async def _download(self, context):
         cfg = get_config()
         out_dir = context.working_dir or cfg.paths.output_dir
-        # URL → universal downloader, else treat as path
         if isinstance(context.video_source, str) and context.video_source.startswith("http"):
             downloader = UniversalDownloader(out_dir)
             loop = asyncio.get_event_loop()
@@ -70,7 +71,6 @@ class WorkflowStepExecutor:
                 raise FileNotFoundError(f"Source not found: {p}")
 
     async def _concat(self, context):
-        # If working dir contains multiple mp4 or a folder provided, concat
         src = context.video_file
         if src and src.is_dir():
             out = context.working_dir / "combined_video.mp4"
@@ -79,12 +79,8 @@ class WorkflowStepExecutor:
                 raise RuntimeError("Concatenation failed")
             context.video_file = out
             context.add_output_file(out, "video")
-        elif src and src.is_file():
-            # No-op for single file
-            return
 
     async def _subtitle(self, context):
-        # Extract audio and run Whisper
         video = context.video_file
         if not video or not video.exists():
             raise RuntimeError("No video file for subtitle step")
@@ -108,7 +104,6 @@ class WorkflowStepExecutor:
         context.subtitle_files.append(Path(srt))
 
     async def _translate(self, context):
-        # Translate last generated srt
         if not context.subtitle_files:
             return
         src_srt = context.subtitle_files[-1]
@@ -120,7 +115,6 @@ class WorkflowStepExecutor:
         video = context.video_file
         if not video or not video.exists():
             raise RuntimeError("No video for embedding")
-        # Prefer translated if available
         sub = None
         for cand in reversed(context.subtitle_files):
             if Path(cand).exists():
@@ -144,6 +138,27 @@ class WorkflowStepExecutor:
             split_video_by_duration(video, out_dir, duration)
             for f in sorted(out_dir.glob("*.mp4")):
                 context.add_output_file(f, "part")
+
+    async def _watermark(self, context):
+        video = context.video_file
+        if not video or not video.exists():
+            return
+        wm_text = get_config().processing.watermark_text
+        out = context.working_dir / f"{video.stem}_wm.mp4"
+        ok = embed_watermark(video, out, text=wm_text)
+        if ok:
+            context.video_file = out
+            context.add_output_file(out, "processed")
+
+    async def _upload(self, context):
+        video = context.video_file
+        if not video or not video.exists():
+            return
+        platforms = get_config().platforms.enabled_platforms
+        uploader = UploadManager()
+        for p in platforms:
+            if p == "telegram":
+                uploader.upload("telegram", video, {"caption": video.stem})
 
     async def _noop(self, context):
         await asyncio.sleep(0.05)
