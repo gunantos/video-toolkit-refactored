@@ -1,24 +1,18 @@
-from modules.scrapper.base import BaseScraper
+from core.scrapers.base import BaseScraper
 import requests
 from bs4 import BeautifulSoup
-from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
 import time
 import re
 from pathlib import Path
-from core.utils.logging import info, success, error, safe_filename
+from core.utils.logging import info, success, error
 import json
-from typing import Optional, Tuple
-from selenium.webdriver.chrome.options import Options
+import time
 
 class DiaryScraper(BaseScraper):
     BASE = "https://diarypsikologi.id"
 
-    def scrape_drama_page(self, drama_id: str) -> Optional[dict]:
-        """Scrape drama info from main page"""
+    def scrape_drama_page(self, drama_id: str):
         url = f"{self.BASE}/drama/{drama_id}"
         info(f"Diary: accessing {url}")
         
@@ -31,46 +25,39 @@ class DiaryScraper(BaseScraper):
         
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Extract thumbnail
         thumb_tag = soup.select_one("img.film_bookCover__YRcsa")
         thumbnail_url = thumb_tag['src'] if thumb_tag else None
-        
-        # Extract title
+
         title_tag = soup.select_one("h1.film_bookName__ys_T3")
         title = title_tag.text.strip() if title_tag else "Unknown Title"
-        
-        # Extract description
+
         desc_tag = soup.select_one("p.film_pcIntro__BB1Ox")
         description = desc_tag.text.strip() if desc_tag else ""
-        
-        # Extract episodes list
+
         episode_list = []
         items = soup.select("div.pcSeries_listItem__sd0Xp")
-        
         for idx, item in enumerate(items, start=1):
             link_tag = item.select_one("a.pcSeries_imgBox___UvIY")
             if not link_tag:
                 continue
-                
             href = link_tag.get("href")
             if not href or not href.startswith("/video/"):
                 continue
             path = href.lstrip("/video/")
-            
-            # Extract episode metadata
+
             ep_num_tag = item.select_one("a.pcSeries_rightIntro__UFC_8 span.pcSeries_pageNum__xkXBk")
             ep_num = ep_num_tag.text.strip() if ep_num_tag else f"{idx:02d}"
-            
+
             ep_title_tag = item.select_one("a.pcSeries_rightIntro__UFC_8 span.pcSeries_title__R9vip")
             ep_title = ep_title_tag.text.strip() if ep_title_tag else ""
-            
+
             episode_list.append({
                 "path": path,
                 "episode_number": ep_num,
                 "episode_title": ep_title,
                 "index": idx
             })
-        
+
         info(f"Diary: Found title='{title}', {len(episode_list)} episodes")
         return {
             "thumbnail": thumbnail_url,
@@ -79,23 +66,15 @@ class DiaryScraper(BaseScraper):
             "episodes": episode_list
         }
 
-    def get_real_video_url_selenium(self, video_path: str) -> Optional[str]:
-        """Extract actual MP4 URL using Selenium with performance logs"""
+    def get_real_video_url_selenium(self, video_path: str):
         url_page = f"{self.BASE}/video/{video_path}"
         info(f"Diary: accessing video page: {url_page}")
-        
-        chrome_options = Options()
-        if self.headless:
-            chrome_options.add_argument('--headless')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--ignore-certificate-errors')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
-        
+
+        chrome_options = self._get_chrome_options()
+
         driver = None
         try:
-            driver = webdriver.Chrome(options=chrome_options)
+            driver = self._init_external_driver(chrome_options)
             driver.get(url_page)
             time.sleep(5)
             logs = driver.get_log('performance')
@@ -128,11 +107,28 @@ class DiaryScraper(BaseScraper):
                 except Exception:
                     pass
 
-    def download_thumbnail(self, thumbnail_url: str, folder_path: Path) -> bool:
+    def _get_chrome_options(self):
+        from selenium import webdriver
+        options = webdriver.ChromeOptions()
+        if self.headless:
+            options.add_argument('--headless')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--ignore-certificate-errors')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+        return options
+
+    def _init_external_driver(self, options):
+        from selenium import webdriver
+        return webdriver.Chrome(options=options)
+
+    def download_thumbnail(self, thumbnail_url: str, folder_path: Path):
         if not thumbnail_url:
             info("Diary: No thumbnail available")
             return False
         try:
+            import requests
             response = requests.get(thumbnail_url, stream=True, timeout=20)
             response.raise_for_status()
             filename = thumbnail_url.split("/")[-1].split("?")[0]
@@ -146,8 +142,9 @@ class DiaryScraper(BaseScraper):
             error(f"Diary: Failed to download thumbnail: {e}")
             return False
 
-    def download_file_with_resume(self, url: str, file_path: Path, max_retries: int = 5) -> bool:
+    def download_file_with_resume(self, url: str, file_path: Path, max_retries: int = 5):
         info(f"Diary: Starting download from: {url}")
+        import requests
         headers = {"User-Agent": "Mozilla/5.0"}
         session = requests.Session()
         downloaded = 0
@@ -180,7 +177,7 @@ class DiaryScraper(BaseScraper):
         error(f"Diary: Failed to download after {max_retries} attempts")
         return False
 
-    def download_series(self, drama_id: str, dest_folder: Path) -> Optional[Path]:
+    def download_series(self, drama_id: str, dest_folder: Path):
         info("Diary: Starting series download (scraping only)")
         dest_folder.mkdir(parents=True, exist_ok=True)
         drama_info = self.scrape_drama_page(drama_id)
