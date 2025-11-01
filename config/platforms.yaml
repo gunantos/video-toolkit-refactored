@@ -1,9 +1,12 @@
 platforms:
+  telegram:
+    target_size_mb: 2048
+    max_width: 1920
+    audio_bitrate_k: 128
+    caption_template: "{title}"
   tiktok:
     caption_template: "{title}\n{hashtags}"
     hashtags: ["dramachina","movie","indonesia","rekomendasi","filmbaru","subindo","romance","series"]
     hashtag_limit: 8
   youtube:
     description_template: "{title}\n\n{description}\n\nTags: {tags}"
-  telegram:
-    caption_template: "{title}"
