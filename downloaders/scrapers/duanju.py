@@ -1,8 +1,4 @@
-"""
-DuanjuScraper implementation (basic) using Playwright + yt-dlp
-Note: Selectors and extraction logic may need adjustment per site changes.
-"""
-
+from core.scrapers.base import BaseScraper
 import re
 import shutil
 import subprocess
@@ -14,10 +10,9 @@ from core.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-
-class DuanjuScraper:
+class DuanjuScraper(BaseScraper):
     def __init__(self, headless: bool = True):
-        self.headless = headless
+        super().__init__(headless)
 
     def _slugify(self, text: str) -> str:
         s = re.sub(r"[^a-zA-Z0-9\-_]+", "-", text.strip())
@@ -34,7 +29,6 @@ class DuanjuScraper:
         ]
         try:
             subprocess.run(cmd, check=True)
-            # Pick latest file
             vids = sorted(out_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
             return vids[0] if vids else None
         except Exception as e:
@@ -46,7 +40,6 @@ class DuanjuScraper:
         if not parts:
             return None
         if len(parts) == 1:
-            # Copy single to combined
             shutil.copy2(parts[0], output_path)
             return output_path
         list_file = episodes_dir / "_concat.txt"
@@ -63,13 +56,6 @@ class DuanjuScraper:
         return output_path if output_path.exists() else None
 
     def download_series(self, url_or_id: str, output_dir: Path) -> Optional[Path]:
-        """
-        Basic implementation assumptions:
-        - url_or_id can be a full URL to a series page
-        - The page contains a list of episode links with CSS '.episode a' (adjust as needed)
-        - Each episode page contains a playable video URL or an embedded player iframe with src
-        - For each episode URL, we pass to yt-dlp for robust extraction
-        """
         output_dir.mkdir(parents=True, exist_ok=True)
 
         series_url = url_or_id if url_or_id.startswith("http") else f"https://duanju.example/series/{url_or_id}"
@@ -81,14 +67,12 @@ class DuanjuScraper:
             logger.info(f"Opening series page: {series_url}")
             page.goto(series_url, wait_until="domcontentloaded")
 
-            # Try to get series title for slug
             title = page.title() or "series"
             slug = self._slugify(title)
             series_root = output_dir / slug
             episodes_dir = series_root / "temp_episodes"
             episodes_dir.mkdir(parents=True, exist_ok=True)
 
-            # Find episode links - adjust selector per actual site
             episode_links: List[str] = []
             try:
                 els = page.query_selector_all("a[href*='episode'], .episode a, .episodes a")
@@ -98,7 +82,6 @@ class DuanjuScraper:
                         if href.startswith("http"):
                             episode_links.append(href)
                         else:
-                            # Make absolute if relative
                             base = page.url.rstrip("/")
                             if href.startswith("/"):
                                 episode_links.append(base.split("/", 3)[0] + "//" + base.split("/", 3)[2] + href)
@@ -108,7 +91,6 @@ class DuanjuScraper:
                 logger.warning(f"Episode selector failed: {e}")
 
             if not episode_links:
-                # fallback: treat input URL directly
                 logger.warning("No episode links found; attempting direct download of provided URL")
                 out = self._yt_dlp(series_url, episodes_dir)
                 if not out:
@@ -119,7 +101,6 @@ class DuanjuScraper:
                     logger.info(f"Downloading episode {idx}/{len(episode_links)}: {ep_url}")
                     self._yt_dlp(ep_url, episodes_dir)
 
-            # Concat if multiple
             combined = series_root / "combined_video.mp4"
             result = self._concat_if_many(episodes_dir, combined)
             context.close()
