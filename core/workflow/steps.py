@@ -1,5 +1,5 @@
 """
-Auto-compress for Telegram if size exceeds limit
+Update download step to integrate Aliside and Diary scrapers alongside Duanju and UniversalDownloader
 """
 
 import asyncio
@@ -11,6 +11,8 @@ from core.config import get_config
 from core.utils.logging import get_logger
 from downloaders.universal import UniversalDownloader
 from downloaders.scrapers.duanju import DuanjuScraper
+from downloaders.scrapers.aliside import AlisideScraper
+from downloaders.scrapers.diary import DiaryScraper
 from processors.subtitle.generator import extract_audio_for_whisper, generate_subtitle_whisper
 from processors.subtitle.translator import translate_subtitle_robust
 from processors.subtitle.embedder import embed_subtitle_in_video
@@ -66,14 +68,36 @@ class WorkflowStepExecutor:
                 return
             else:
                 raise RuntimeError("Duanju scraper download failed")
+        if isinstance(source, str) and source.startswith("aliside:"):
+            scraper = AlisideScraper(headless=True)
+            series_id = source.split(":", 1)[1]
+            result = scraper.download_series(series_id, out_dir)
+            if result and Path(result).exists():
+                context.video_file = Path(result)
+                context.add_output_file(Path(result), "download")
+                logger.info(f"Downloaded via aliside scraper: {result}")
+                return
+            else:
+                raise RuntimeError("Aliside scraper download failed")
+        if isinstance(source, str) and source.startswith("diary:"):
+            scraper = DiaryScraper(headless=True)
+            series_id = source.split(":", 1)[1]
+            result = scraper.download_series(series_id, out_dir)
+            if result and Path(result).exists():
+                context.video_file = Path(result)
+                context.add_output_file(Path(result), "download")
+                logger.info(f"Downloaded via diary scraper: {result}")
+                return
+            else:
+                raise RuntimeError("Diary scraper download failed")
         if isinstance(source, str) and source.startswith("http"):
-            downloader = UniversalDownloader(out_dir)
+            downloader = UniversalDownloader()
             loop = asyncio.get_event_loop()
-            file_path = await loop.run_in_executor(None, downloader.download, source)
+            file_path = await loop.run_in_executor(None, downloader.download, source, out_dir)
             if file_path:
                 context.video_file = Path(file_path)
                 context.add_output_file(Path(file_path), "download")
-                logger.info(f"Downloaded: {file_path}")
+                logger.info(f"Downloaded via universal downloader: {file_path}")
                 return
             else:
                 raise RuntimeError("Download failed")
